@@ -1,98 +1,266 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import * as Clipboard from "expo-clipboard";
+import React, { useMemo, useState } from "react";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { analyzeQuote } from "../../src/lib/backend";
+
+type Result = {
+  screwScore: "green" | "yellow" | "red";
+  otd: number;
+  otdProvided?: boolean;
+  topIssues: string[];
+};
+
+const COLORS = {
+  bg: "#FAFAF8",
+  card: "#FFFFFF",
+  text: "#1F1F1F",
+  muted: "#6B6B6B",
+  border: "#E6E6E3",
+  green: "#1E7F4F",
+  yellow: "#C9A100",
+  red: "#B3261E",
+};
+
+function buildDealerMessage(score: "green" | "yellow" | "red", issues: string[]) {
+  if (score === "green") {
+    return "The quote looks reasonable. Please confirm this is the final out-the-door price.";
+  }
+
+  if (score === "yellow") {
+    return `I reviewed the quote and had a few concerns (${issues.join(
+      ", "
+    )}). Can you clarify or revise the out-the-door price?`;
+  }
+
+  return `I reviewed the quote and noticed issues (${issues.join(
+    ", "
+  )}). Please provide an updated out-the-door price with non-optional fees removed.`;
+}
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const [quoteText, setQuoteText] = useState(
+    "MSRP 41000, Doc fee 899, Nitrogen 299, Paint protection 1299"
+  );
+  const [result, setResult] = useState<Result | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  const barColor = useMemo(() => {
+    if (!result) return COLORS.border;
+    if (result.screwScore === "green") return COLORS.green;
+    if (result.screwScore === "yellow") return COLORS.yellow;
+    return COLORS.red;
+  }, [result]);
+
+  return (
+    <View style={styles.screen}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.h1}>Frontle</Text>
+          <Text style={styles.sub}>
+            Paste the dealer quote. Get a verdict. Don’t get played.
+          </Text>
+
+          <View style={styles.card}>
+            <Text style={styles.label}>Quote text</Text>
+            <TextInput
+              value={quoteText}
+              onChangeText={setQuoteText}
+              placeholder="Paste quote text here…"
+              placeholderTextColor={COLORS.muted}
+              multiline
+              style={styles.input}
+            />
+
+            <Pressable
+              style={[styles.btn, loading && styles.btnDisabled]}
+              disabled={loading}
+              onPress={async () => {
+                try {
+                  setLoading(true);
+                  const data = await analyzeQuote(quoteText);
+                  setResult({
+                    screwScore: data.screwScore,
+                    otd: data.otd,
+                    otdProvided: data.otdProvided,
+                    topIssues: data.topIssues ?? [],
+                  });
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            >
+              <Text style={styles.btnText}>
+                {loading ? "Analyzing…" : "Analyze"}
+              </Text>
+            </Pressable>
+
+            {result && (
+              <View style={styles.result}>
+                <View style={[styles.bar, { backgroundColor: barColor }]} />
+                <View style={styles.resultBody}>
+                  <Text style={styles.score}>
+                    Verdict: {result.screwScore.toUpperCase()}
+                  </Text>
+
+                  <Text style={styles.otd}>
+                    {result.otdProvided ? "OTD" : "Estimated OTD"}: ${result.otd}
+                  </Text>
+
+                  {result.topIssues.slice(0, 3).map((i, idx) => (
+                    <Text key={idx} style={styles.issue}>
+                      • {i}
+                    </Text>
+                  ))}
+
+                  <View style={{ height: 10 }} />
+
+                  <Pressable
+                    style={styles.btnAlt}
+                    onPress={async () => {
+                      const msg = buildDealerMessage(
+                        result.screwScore,
+                        result.topIssues
+                      );
+                      await Clipboard.setStringAsync(msg);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                  >
+                    <Text style={styles.btnAltText}>
+                      {copied ? "Copied ✓" : "Copy message to dealer"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  screen: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  content: {
+    paddingTop: 72,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    gap: 10,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  h1: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: COLORS.text,
+    letterSpacing: -0.5,
+  },
+  sub: {
+    fontSize: 14,
+    color: COLORS.muted,
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  card: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 12,
+    minHeight: 120,
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  btn: {
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.text,
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  btnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  result: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  bar: {
+    height: 6,
+    width: "100%",
+  },
+  resultBody: {
+    padding: 12,
+    gap: 6,
+  },
+  score: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  otd: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  issue: {
+    fontSize: 13,
+    color: COLORS.muted,
+    lineHeight: 18,
+  },
+  btnAlt: {
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  btnAltText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: "700",
   },
 });
